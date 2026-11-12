@@ -562,7 +562,6 @@ function boot() {
   if (tg) {
     try { tg.ready(); tg.expand(); tg.setHeaderColor('#16419b'); tg.setBackgroundColor('#f4f6fb'); } catch (e) {}
   }
-  $('loginHint').textContent = USER_NAME !== 'Customer' ? 'Signed in as ' + USER_NAME : '';
 
   if (state.token && state.role) {
     enterApp(false);
