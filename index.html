@@ -978,7 +978,7 @@ function buildOrderText() {
     lines.push((i + 1) + '. ' + it.partNo + name + ' x' + it.qty);
   });
   state.manual.forEach((m, j) => {
-    lines.push((items.length + j + 1) + '. ' + m.name + ' (manual) x' + m.qty);
+    lines.push((items.length + j + 1) + '. ' + m.name + ' x' + m.qty);
   });
   lines.push('');
   lines.push('*OMC Name* : ' + odValue('odOmc'));
