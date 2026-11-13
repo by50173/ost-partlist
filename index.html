@@ -362,6 +362,7 @@ svg{display:block}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <h3>No parts found</h3>
       <p id="emptyMsg">Try a different part number or name.</p>
+      <button id="addManualBtn" class="btn-primary">Add part not in list</button>
     </div>
   </main>
 
@@ -440,6 +441,20 @@ svg{display:block}
   </div>
 </div>
 
+<!-- Manual part (not in the list): kept only for this order -->
+<div id="manualSheet" class="sheet-back hidden">
+  <div class="sheet">
+    <h3>Add part not in list</h3>
+    <p class="sub">Only for this order. Kept until you clear the cart.</p>
+    <label class="od-field"><span>Part name</span><input id="manualName" type="text" autocomplete="off"></label>
+    <label class="od-field"><span>Quantity</span><input id="manualQty" type="number" min="1" value="1"></label>
+    <div class="share-row">
+      <button id="manualCancelBtn" class="sh-copy">Cancel</button>
+      <button id="manualSaveBtn" class="sh-share">Add to order</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 <div id="loader" class="hidden"><div class="spinner"></div></div>
 <input type="file" id="fileInput" accept="image/*" class="hidden">
@@ -476,7 +491,8 @@ const state = {
   cart: SS.get('cart', {}),          // { partNo: qty }
   query: '',
   tab: 'catalog',
-  uploadPartNo: null
+  uploadPartNo: null,
+  manual: SS.get('manual', [])        // [{ id, name, qty }] - this order only
 };
 
 /* line-art placeholder for parts without an image */
@@ -590,6 +606,9 @@ function bindEvents() {
   $('copyBtn').addEventListener('click', copyShareText);
   $('nativeShareBtn').addEventListener('click', nativeShare);
   $('shareCloseBtn').addEventListener('click', () => $('shareSheet').classList.add('hidden'));
+  $('addManualBtn').addEventListener('click', openManual);
+  $('manualCancelBtn').addEventListener('click', () => $('manualSheet').classList.add('hidden'));
+  $('manualSaveBtn').addEventListener('click', addManual);
 
   $('fileInput').addEventListener('change', onFilePicked);
 }
@@ -810,10 +829,40 @@ function setCartQty(partNo, qty) {
 function clearCart() {
   state.cart = {};
   SS.set('cart', state.cart);
+  state.manual = [];
+  SS.set('manual', state.manual);
   renderCartBadge();
   renderCart();
   renderParts();
   toast('Cart cleared');
+}
+
+function openManual() {
+  $('manualName').value = '';
+  $('manualQty').value = '1';
+  $('manualSheet').classList.remove('hidden');
+  $('manualName').focus();
+}
+
+function addManual() {
+  const name = $('manualName').value.trim().substring(0, 100);
+  const qty = Math.max(1, parseInt($('manualQty').value, 10) || 1);
+  if (!name) { toast('Type the part name', true); return; }
+  state.manual.push({ id: Date.now(), name: name, qty: qty });
+  SS.set('manual', state.manual);
+  $('manualSheet').classList.add('hidden');
+  haptic('medium');
+  toast('Added to order: ' + name);
+  renderCartBadge();
+  renderCart();
+}
+
+function setManualQty(id, qty) {
+  if (qty <= 0) state.manual = state.manual.filter(x => x.id !== id);
+  else state.manual.forEach(x => { if (x.id === id) x.qty = qty; });
+  SS.set('manual', state.manual);
+  renderCartBadge();
+  renderCart();
 }
 
 function cartItems() {
@@ -825,7 +874,8 @@ function cartItems() {
 }
 
 function renderCartBadge() {
-  const n = Object.keys(state.cart).reduce((s, k) => s + state.cart[k], 0);
+  const n = Object.keys(state.cart).reduce((s, k) => s + state.cart[k], 0) +
+            state.manual.reduce((s, m) => s + m.qty, 0);
   const b = $('cartBadge');
   b.textContent = n;
   b.classList.toggle('hidden', n === 0);
@@ -833,9 +883,11 @@ function renderCartBadge() {
 
 function renderCart() {
   const items = cartItems();
-  $('cartEmpty').classList.toggle('hidden', items.length > 0);
-  $('cartContent').classList.toggle('hidden', items.length === 0);
-  if (!items.length) return;
+  const manual = state.manual;
+  const empty = items.length + manual.length === 0;
+  $('cartEmpty').classList.toggle('hidden', !empty);
+  $('cartContent').classList.toggle('hidden', empty);
+  if (empty) return;
 
   $('cartList').innerHTML = items.map(it =>
     '<div class="cart-item">' +
@@ -852,9 +904,37 @@ function renderCart() {
         '</div>' +
         '<button class="rm-btn" data-rm="' + esc(it.partNo) + '">Remove</button>' +
       '</div>' +
-    '</div>').join('');
+    '</div>').join('') +
+    manual.map(it =>
+      '<div class="cart-item">' +
+        '<img class="cart-thumb" src="' + PLACEHOLDER + '">' +
+        '<div class="cart-info">' +
+          '<div class="row-no mono">MANUAL</div>' +
+          '<div class="row-name">' + esc(it.name) + '</div>' +
+        '</div>' +
+        '<div class="cart-ctrl">' +
+          '<div class="stepper">' +
+            '<button data-mstep="-1" aria-label="Decrease">&minus;</button>' +
+            '<span class="qty">' + it.qty + '</span>' +
+            '<button data-mstep="1" aria-label="Increase">+</button>' +
+          '</div>' +
+          '<button class="rm-btn" data-mrm="' + it.id + '">Remove</button>' +
+        '</div>' +
+      '</div>').join('');
 
-  $('cartTotal').textContent = items.reduce((s, i) => s + i.qty, 0);
+  $('cartTotal').textContent = items.reduce((s, i) => s + i.qty, 0) +
+                               manual.reduce((s, m) => s + m.qty, 0);
+
+  $('cartList').querySelectorAll('[data-mstep]').forEach(b => b.addEventListener('click', () => {
+    const id = Number(b.closest('.cart-item').querySelector('[data-mrm]').dataset.mrm);
+    const it = state.manual.find(x => x.id === id);
+    if (it) setManualQty(id, it.qty + parseInt(b.dataset.mstep, 10));
+    haptic('light');
+  }));
+  $('cartList').querySelectorAll('[data-mrm]').forEach(b => b.addEventListener('click', () => {
+    setManualQty(Number(b.dataset.mrm), 0);
+    toast('Removed from order');
+  }));
 
   $('cartList').querySelectorAll('[data-cstep]').forEach(b => b.addEventListener('click', () => {
     const no = b.closest('.cart-item').querySelector('[data-rm]').dataset.rm;
@@ -897,6 +977,9 @@ function buildOrderText() {
     const name = it.partName ? ' (' + it.partName + ')' : '';
     lines.push((i + 1) + '. ' + it.partNo + name + ' x' + it.qty);
   });
+  state.manual.forEach((m, j) => {
+    lines.push((items.length + j + 1) + '. ' + m.name + ' (manual) x' + m.qty);
+  });
   lines.push('');
   lines.push('*OMC Name* : ' + odValue('odOmc'));
   lines.push('*Approved by* : ' + odValue('odApproved'));
@@ -908,8 +991,7 @@ function buildOrderText() {
 }
 
 async function shareOrder() {
-  const items = cartItems();
-  if (!items.length) { toast('Cart is empty', true); return; }
+  if (!cartItems().length && !state.manual.length) { toast('Cart is empty', true); return; }
 
   haptic('medium');
   openShareSheet(buildOrderText());   // always show sheet: Copy + Share (app picker)
